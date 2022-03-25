@@ -144,7 +144,8 @@ class CustomKernel(Kernel):
         # Process messages until there aren't any (at which point there never can
         # be again, because agents only "wake" in response to messages), or until
         # the kernel stop time is reached.
-        while not self.messages.empty() and self.currentTime  and self.currentTime - start_time < dt.timedelta(seconds=run_time_sec): #and (self.currentTime <= self.stopTime)
+        while not self.messages.empty() and self.currentTime and self.currentTime - start_time <= dt.timedelta(seconds=run_time_sec)\
+                and (self.currentTime <= self.stopTime):
             # Get the next message in timestamp order (delivery time) and extract it.
             self.currentTime, event = self.messages.get()
             msg_recipient, msg_type, msg = event
@@ -227,8 +228,9 @@ class CustomKernel(Kernel):
                                  "currentTime:", self.currentTime,
                                  "messageType:", self.msg.type)
 
-            timer = self.currentTime
-
+            if self.currentTime > self.stopTime:
+                return False
+            return True
 
 def kernel_generator(Exchange_Agent = 1, POV_Market_Maker_Agent = 1, Value_Agents = 100,
                     Momentum_Agents = 25, Noise_Agents = 5000, seed=413,
@@ -484,11 +486,13 @@ def kernel_generator(Exchange_Agent = 1, POV_Market_Maker_Agent = 1, Value_Agent
                                  )
     # KERNEL
     kernel = CustomKernel("RMSC03 Kernel", random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 32,
-                                                                                                      dtype='uint64')))
-    kernel.runner(agents=agents,
-                  startTime=kernelStartTime,
-                  stopTime=kernelStopTime,
-                  agentLatencyModel=latency_model,
-                  defaultComputationDelay=defaultComputationDelay,
-                  oracle=oracle,
-                  log_dir=log_dir)
+                                                                                           dtype='uint64')))
+    kernel.start()
+    return kernel
+    # kernel.runner(agents=agents,
+    #               startTime=kernelStartTime,
+    #               stopTime=kernelStopTime,
+    #               agentLatencyModel=latency_model,
+    #               defaultComputationDelay=defaultComputationDelay,
+    #               oracle=oracle,
+    #               log_dir=log_dir)

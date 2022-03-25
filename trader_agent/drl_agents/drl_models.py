@@ -2,7 +2,6 @@ from stable_baselines3 import A2C, PPO, DQN
 
 
 class A2Cagent(A2C):
-
     def __init__(self, df, env, policy, agt_params, verbose=0):
         self.verbose = verbose
         self.df = df
