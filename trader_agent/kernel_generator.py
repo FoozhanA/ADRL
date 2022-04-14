@@ -17,24 +17,24 @@ import os, queue, sys
 from abides.message.Message import MessageType
 
 from abides.util.util import log_print
-
+sys.path.append('/home/ict520c/Documents/ADRL/abides')
 
 
 
 
 class CustomKernel(Kernel):
-    def __init__(self,kernel_name, random_state = None, agents = [], startTime = None, stopTime = None,
-             num_simulations = 1, defaultComputationDelay = 1,
-             defaultLatency = 1, agentLatency = None, latencyNoise = [ 1.0 ],
-             agentLatencyModel = None, skip_log = False,
-             seed = None, oracle = None, log_dir = None):
-        super().__init__(kernel_name, random_state = None)
+    def __init__(self,kernel_name, random_state, agents, startTime=None, stopTime=None,
+             num_simulations=1, defaultComputationDelay=1,
+             defaultLatency=1, agentLatency=None, latencyNoise=[1.0],
+             agentLatencyModel=None, skip_log=False,
+             seed=None, oracle=None, log_dir=None, ):
+        super().__init__(kernel_name, random_state)
         self.agents = agents
         self.startTime = startTime
         self.stopTime = stopTime
         self.num_simulations = num_simulations
         self.defaultComputationDelay = defaultComputationDelay
-        if self.agentLatency is None:
+        if agentLatency is None:
             self.agentLatency = [[defaultLatency] * len(agents)] * len(agents)
         else:
             self.agentLatency = agentLatency
@@ -53,11 +53,11 @@ class CustomKernel(Kernel):
         self.agentComputationDelays = [self.defaultComputationDelay] * len(self.agents)
 
         self.currentAgentAdditionalDelay = 0
-
+        self.prevtime = self.startTime + pd.Timedelta(9, unit='h') + pd.Timedelta(30,unit='m')
 
     def start(self):
         self.simulation_start_time = dt.datetime.now()
-        print("Simulation Start Time: {}".format(simulation_start_time))
+        print("Simulation Start Time: {}".format(self.simulation_start_time))
         log_print("Kernel started: {}", self.name)
         log_print("Simulation started!")
 
@@ -80,6 +80,7 @@ class CustomKernel(Kernel):
         # Track starting wall clock time and total message count for stats at the end.
         self.eventQueueWallClockStart = pd.Timestamp('now')
         self.ttl_messages = 0
+
     def end_sim(self):
         if self.messages.empty():
             log_print("\n--- Kernel Event Queue empty ---")
@@ -138,17 +139,30 @@ class CustomKernel(Kernel):
         print("Time taken to run simulation: {}".format(simulation_end_time - self.simulation_start_time))
 
         return self.custom_state
-    def runner(self,run_time_sec = 60, *args, **kwargs):
-        start_time = self.currentTime
+
+    def runner(self,intervals = 1, *args, **kwargs):
+
+
 
         # Process messages until there aren't any (at which point there never can
         # be again, because agents only "wake" in response to messages), or until
         # the kernel stop time is reached.
-        while not self.messages.empty() and self.currentTime and self.currentTime - start_time <= dt.timedelta(seconds=run_time_sec)\
-                and (self.currentTime <= self.stopTime):
+
+
+
+        while not self.messages.empty() and self.currentTime and (self.currentTime <= self.stopTime):
+            # print(len(self.messages.queue))
             # Get the next message in timestamp order (delivery time) and extract it.
+
+
+
+
             self.currentTime, event = self.messages.get()
+
+
+
             msg_recipient, msg_type, msg = event
+
 
             # Periodically print the simulation time and total messages, even if muted.
             if self.ttl_messages % 100000 == 0:
@@ -169,6 +183,7 @@ class CustomKernel(Kernel):
 
                 # Who requested this wakeup call?
                 agent = msg_recipient
+
 
                 # Test to see if the agent is already in the future.  If so,
                 # delay the wakeup until the agent can act again.
@@ -198,6 +213,19 @@ class CustomKernel(Kernel):
 
                 # Who is receiving this message?
                 agent = msg_recipient
+                # if self.agents[agent].name == 'EXAMPLE_EXPERIMENTAL_AGENT':
+                #     print(msg_type,msg,self.currentTime)
+                #     if msg.body['msg'] == "ORDER_EXECUTED":
+                #         print(msg.body['order'].fill_price)
+                #     if msg.body['msg'] == 'MARKET_DATA':
+                #         self.agents[agent].placeMarketOrder(1,False)
+                #
+                # if self.agents[agent].name == "EXCHANGE_AGENT":
+                #     if msg.body['sender'] == 5128:
+                #         print(msg_type,msg,self.currentTime)
+                #         if msg.body['msg'] == 'LimitOrder':
+                #             break
+
 
                 # Test to see if the agent is already in the future.  If so,
                 # delay the message until the agent can act again.
@@ -222,23 +250,27 @@ class CustomKernel(Kernel):
 
                 log_print("After receiveMessage return, agent {} delayed from {} to {}",
                           agent, self.fmtTime(self.currentTime), self.fmtTime(self.agentCurrentTimes[agent]))
+                if self.prevtime <= self.currentTime and self.currentTime - self.prevtime >= pd.Timedelta(1, unit='min'):
+                    self.prevtime = self.currentTime
+                    break
+
 
             else:
                 raise ValueError("Unknown message type found in queue",
                                  "currentTime:", self.currentTime,
                                  "messageType:", self.msg.type)
 
-            if self.currentTime > self.stopTime:
-                return False
-            return True
+            if self.messages.empty() or (self.currentTime > self.stopTime):
+                return True
+
 
 def kernel_generator(Exchange_Agent = 1, POV_Market_Maker_Agent = 1, Value_Agents = 100,
                     Momentum_Agents = 25, Noise_Agents = 5000, seed=413,
                     ticker='ABM',
-                    historical_date=20200603,
+                    historical_date='20200603',
                     start_time=dt.datetime.strptime('09:30:00','%H:%M:%S'),
-                    end_time=dt.datetime.strptime('10:30:00','%H:%M:%S'), verbose = False,
-                    fund_vol=1e-8, experimental_agent=True, ea_short_window='2min', ea_long_window='5min'):
+                    end_time=dt.datetime.strptime('10:30:00','%H:%M:%S'), verbose=False,
+                    fund_vol=1e-8, experimental_agent=False, ea_short_window='2min', ea_long_window='5min'):
 
     log_dir = f'log/experimental_agent_demo_short_2min_long_5min_{seed}'
     system_name = "ABIDES: Agent-Based Interactive Discrete Event Simulation"
@@ -415,43 +447,45 @@ def kernel_generator(Exchange_Agent = 1, POV_Market_Maker_Agent = 1, Value_Agent
 
     # 6) Experimental Agent
 
-    #### Example Experimental Agent parameters
+    ### Example Experimental Agent parameters
 
     # if experimental_agent:
     #     experimental_agent = ExampleExperimentalAgent(
-    #         id=agent_count,
-    #         name='EXAMPLE_EXPERIMENTAL_AGENT',
-    #         type='ExampleExperimentalAgent',
-    #         symbol=symbol,
-    #         starting_cash=starting_cash,
-    #         levels=5,
-    #         subscription_freq=1e9,
-    #         wake_freq='10s',
-    #         order_size=100,
-    #         short_window=ea_short_window,
-    #         long_window=ea_long_window,
-    #         log_orders=True,
-    #         random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 32, dtype='uint64'))
+    #     id=agent_count,
+    #     name='EXAMPLE_EXPERIMENTAL_AGENT',
+    #     type='ExampleExperimentalAgent',
+    #     symbol=symbol,
+    #     starting_cash=starting_cash,
+    #     levels=5,
+    #     subscription_freq=1e9,
+    #     wake_freq='10s',
+    #     order_size=100,
+    #     short_window=ea_short_window,
+    #     long_window=ea_long_window,
+    #     log_orders=True,
+    #     random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 32, dtype='uint64'))
     #     )
-#     else:
-#         experimental_agent = ExampleExperimentalAgentTemplate(
-#             id=agent_count,
-#             name='EXAMPLE_EXPERIMENTAL_AGENT',
-#             type='ExampleExperimentalAgent',
-#             symbol=symbol,
-#             starting_cash=starting_cash,
-#             levels=5,
-#             subscription_freq=1e9,args, remaining_args = parser.parse_known_args()
+    # else:
+    #     experimental_agent = ExampleExperimentalAgentTemplate(
+    #     id=agent_count,
+    #     name='EXAMPLE_EXPERIMENTAL_AGENT',
+    #     type='ExampleExperimentalAgent',
+    #     symbol=symbol,
+    #     starting_cash=starting_cash,
+    #     levels=10,
+    #     subscription_freq=60e9,
+    #     random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 32, dtype='uint64')))
 
     # if config_help:
     #     parser.print_help()
     #     sys.exit()
 
 
-    experimental_agents = [experimental_agent]
-    agents.extend(experimental_agents)
-    agent_types.extend("ExperimentalAgent")
-    agent_count += 1
+    # experimental_agents = [experimental_agent]
+    # agents.extend(experimental_agents)
+    # agent_types.extend("ExperimentalAgent")
+    # agent_count += 1
+
 
 
     ########################################################################################################################
@@ -460,6 +494,7 @@ def kernel_generator(Exchange_Agent = 1, POV_Market_Maker_Agent = 1, Value_Agent
 
 
     kernelStartTime = historical_date
+
     kernelStopTime = mkt_close + pd.to_timedelta('00:01:00')
 
     defaultComputationDelay = 50  # 50 nanoseconds
@@ -486,7 +521,15 @@ def kernel_generator(Exchange_Agent = 1, POV_Market_Maker_Agent = 1, Value_Agent
                                  )
     # KERNEL
     kernel = CustomKernel("RMSC03 Kernel", random_state=np.random.RandomState(seed=np.random.randint(low=0, high=2 ** 32,
-                                                                                           dtype='uint64')))
+                                                                                           dtype='uint64')),
+                            agents=agents,
+                            startTime=kernelStartTime,
+                            stopTime=kernelStopTime,
+                            agentLatencyModel=latency_model,
+                            defaultComputationDelay=defaultComputationDelay,
+                            oracle=oracle,
+                            log_dir=log_dir)
+
     kernel.start()
     return kernel
     # kernel.runner(agents=agents,
