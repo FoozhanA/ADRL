@@ -5,9 +5,15 @@ from gym import spaces
 import random
 from stable_baselines3.common.env_checker import check_env
 from abides.agent.TradingAgent import TradingAgent
-from .kernel_generator import kernel_generator
+from trader_agent.kernel_generator import kernel_generator
 import _pickle as cpickle
 from os.path import exists
+from copy import deepcopy
+from trader_agent.preprocess import TEMA_indicators
+from sklearn.preprocessing import MinMaxScaler
+from collections import deque
+# from unittest import assertIs
+from abides.util.order.MarketOrder import MarketOrder
 
 class TraderEnv(gym.Env):
     """
@@ -16,204 +22,143 @@ class TraderEnv(gym.Env):
     """
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, name, columns_to_env, columns_to_scale, scaler_path, act_price, target, random_reset, apply_penalty = False):
+    def __init__(self, apply_penalty = False):
 
         super(TraderEnv, self).__init__()
         print('###################################################### This is TraderEnv environment!')
-        self.api = APIAgent(id ,name , type, symbol = None, starting_cash = None,)
-        self.df.datetime = pd.to_datetime(self.df.datetime)
-        self.df.index = range(len(self.df))
-        self.target = target
-        self.constant = 1
-        self.stocks_list = list(self.df.stock.unique())
+
+
 
         self.apply_penalty = apply_penalty
         print(f'####### apply_penalty = {self.apply_penalty}')
+        self.balance = 10000000 #100,000$ in cents
 
-        self.prev_action = 'No_Action'
-        self.prev_trade_signal = 'No_Signal'
-        self.total_nb_episods = len(self.df[self.df.end_episod == 1])
+        self.scaler = MinMaxScaler()
 
-        self.columns_to_env = columns_to_env
-        self.columns_to_scale = columns_to_scale
-        if exists(scaler_path):
-            with open(self.path2scaler, "rb") as input_file:
-                self.scaler = cpickle.load(input_file)
-        else:
-            self.scaler = None
+        # self.cols_to_report = ['index', 'stock', 'datetime', 'action', 'profit', self.act_price,
+        #                        'reward', 'done', 'end_episod']
 
-        self.act_price = act_price
-
-        self.cols_to_report = ['index', 'stock', 'datetime', 'action', 'act_profit', self.act_price,
-                               'reward', 'done', 'end_episod']
-
-
-        self.action_space = spaces.Discrete(3)
-        self.observation_space = spaces.Box(low=-1, high=2, shape=(len(self.columns_to_env) + 1 ,),
+        self.action_space = spaces.Box(low = -1, high = 1,shape = (1,))
+        self.observation_space = spaces.Box(low=-1, high=2, shape=(25 ,),
                                             dtype=np.float32)
         # self.current_stock_data = self.df.loc[:, self.columns_to_env].values.astype('float32')
 
         self.action_reward_df = None
         self.info2output = []
         #         self.gym_env_checker(nb_trials=100)
-        self.prev_stg_act_profit = 0
-        self.total_profit = 0
         self.reward = 0
-        self.start_pos = self.current_index
         self.kernel = None
-        self.data = []
+        self.state = []
+        self.close_price = deque(maxlen=50)
+        self.depth = 5
+        self.max_share = 100
+        self.reward_coef = 1e-4
+        self.order_book = None
+        self.shares = 0
+        self.reward = 0
+        self.done = False
+
     def reset(self):
+        self.shares = 0
         self.kernel = kernel_generator()
-        self.data = []
-        while len(self.data) < 50:
-            self.data
+        self.done = False
+        self.balance = 10000000
+        self.close_price = deque(maxlen=50)
+        self.close_price.extend([100000]*50)
+        self.order_book = self.kernel.agents[0].order_books['ABM']
+        # self.kernel.runner()
+        # self.close_price.append(self.kernel.agents[0].order_books['ABM'].close)
+        # indicators = TEMA_indicators(self.close_price)
+        # self.state = [self.balance] + [0] * self.depth * 2 + indicators
+
+        # assertIs(self.order_book, self.kernel.agents[0].order_books['ABM'])
+
         return self._observation()
 
-    @staticmethod
-    def action_type(x):
-        if x in ['No_Action', 1]:
-            return 'hold'
-        elif x == 0:
-            return 'Buy'
-        elif x == 2:
-            return 'Sell'
-
-    @staticmethod
-    def aux_signe(x):
-        if x > 0:
-            return 1
-        elif x < 0:
-            return -1
-        else:
-            return 0
-
-
-
     def step(self, action):
-        # action: hold = 1  sell = 2 , buy = 0
+        begin_asset = self.balance + self.shares * self.close_price[-1]
+        if action != 0:
 
-
-        self.new_take_action(action)
-        # self.stg_act_profit *= 3/2
-
-        # self.reward =
-        penalty = self.aux_penalty(action, self.trade_duration)
-
-        self.reward = self.stg_act_profit
-
-        self.start_pos += 1
-        if action == self.prev_action:
-            self.trade_duration += 1
-        else:
-            self.trade_duration = 1
-
-        act = action
-
-        row2append = row2append +  [self.current_stock, self.df.loc[self.current_index, 'datetime'],
-                                   self.action_type(act), self.stg_act_profit,
-                                   self.current_act_price, self.reward,
-                                   self.done, self.df.loc[self.current_index, 'end_episod']]
-
-        row2append += [self.constant]
-
-        self.info2output.append(row2append)
-
-        if self.done:
-
-            if self.random_reset:
-                self.current_index = random.randrange(len(self.df))
-            else:
-                self.current_index += 1
-                if self.current_index >= len(self.df) - 1:
-                    self.current_index = 0
-            self.total_profit = 0
-            self.reward = 0
-
-            self.start_pos = 0
-        else:
-            self.current_index += 1
-            if self.current_index >= len(self.df) - 1:
-                self.current_index = 0
+            is_buy = action > 0
+            action *= self.max_share
+            if action < 0:
+                action = min(action, self.shares)
+            order = MarketOrder(0, self.kernel.agents[0].currentTime, 'ABM', action, is_buy)
+            cost, shares = self.order_book['ABM'].handleMarketOrder(order)
+            cost *= (-1 if not is_buy else 1)
+            self.kernel.agents[0].publishOrderBookData()
+            self.shares += shares * (-1 if not is_buy else 1)
+            self.balance -= cost
 
         obs = self._observation()
-        # print(obs)
-        self.prev_action = action
-        self.prev_trade_signal = self.trade_signal
-        self.prev_stg_act_profit = self.stg_act_profit
-        self.done = not self.kernel.runner()
+        end_asset = self.balance + self.shares * self.close_price[-1]
+
+        self.reward = (end_asset - begin_asset) * self.reward_coef
+
+        # self.new_take_action(action)
+        # # self.stg_act_profit *= 3/2
+        #
+        # # self.reward =
+        # penalty = self.aux_penalty(action, self.trade_duration)
+        #
+        # self.reward = self.stg_act_profit
+        #
+        # self.start_pos += 1
+        # if action == self.prev_action:
+        #     self.trade_duration += 1
+        # else:
+        #     self.trade_duration = 1
+        #
+        # act = action
+        #
+        # row2append = row2append +  [self.current_stock, self.df.loc[self.current_index, 'datetime'],
+        #                            self.action_type(act), self.stg_act_profit,
+        #                            self.current_act_price, self.reward,
+        #                            self.done, self.df.loc[self.current_index, 'end_episod']]
+        #
+        # row2append += [self.constant]
+        #
+        # self.info2output.append(row2append)
+        #
+        # if self.done:
+        #
+        #     if self.random_reset:
+        #         self.current_index = random.randrange(len(self.df))
+        #     else:
+        #         self.current_index += 1
+        #         if self.current_index >= len(self.df) - 1:
+        #             self.current_index = 0
+        #     self.total_profit = 0
+        #     self.reward = 0
+        #
+        #     self.start_pos = 0
+        # else:
+        #     self.current_index += 1
+        #     if self.current_index >= len(self.df) - 1:
+        #         self.current_index = 0
+        #
+        # obs = self._observation()
+        # # print(obs)
+        # self.prev_action = action
+        # self.prev_trade_signal = self.trade_signal
+        # self.prev_stg_act_profit = self.stg_act_profit
+
         return obs, self.reward, self.done, {}
 
     def _observation(self):
-        # print(self.current_stock_data[self.current_index])
-        current_stk_data = self.current_stock_data[self.current_index]
-        current_stk_data = np.append(current_stk_data, [self.constant, (self.trade_duration - 1) / (330 - 1)])
-        return current_stk_data
-
-
-    def new_take_action(self, action):
-        # action = 0: buy-long
-        # action = 1: no-action
-        # action = 2: sell-short
-
-        self.current_act_price = self.df.loc[self.current_index, 'nscld_' + self.act_price]
-        self.next_act_price = self.df.loc[self.current_index, 'next_' + self.act_price]
-        self.current_stock = self.df.loc[self.current_index, 'stock']
-        if self.done:
-            self.stg_act_profit = 0
-        else:
-
-            if action == 0:
-                self.stg_act_profit = 100 * (self.next_act_price - self.current_act_price) / self.current_act_price
-            elif action == 2:
-                self.stg_act_profit = 100 * (self.current_act_price - self.next_act_price) / self.next_act_price
-
-            else:
-                self.stg_act_profit = 0
-
-    def _take_action(self, action):
-        # action = 0: buy-long
-        # action = 1: no-action
-        # action = 2: sell-short
-
-        self.current_act_price = self.df.loc[self.current_index, 'nscld_' + self.act_price]
-        self.current_stock = self.df.loc[self.current_index, 'stock']
-
-        if action == 0:
-            if self.prev_action == 2:
-                self.enter_long_act_price = self.current_act_price
-                self.exit_short_act_price = self.current_act_price
-                self.stg_act_profit = 100 * (
-                            self.enter_short_act_price - self.exit_short_act_price) / self.exit_short_act_price
-            elif self.prev_action in ['No_Action', 1]:
-                self.enter_long_act_price = self.current_act_price
-                self.stg_act_profit = 0
-            else:
-                self.stg_act_profit = 0
-
-
-        elif action == 2:
-            if self.prev_action == 0:
-                self.enter_short_act_price = self.current_act_price
-                self.exit_long_act_price = self.current_act_price
-                self.stg_act_profit = 100 * (
-                            self.exit_long_act_price - self.enter_long_act_price) / self.enter_long_act_price
-            elif self.prev_action in ['No_Action', 1]:
-                self.enter_short_act_price = self.current_act_price
-                self.stg_act_profit = 0
-            else:
-                self.stg_act_profit = 0
-
-        else:
-            if self.prev_action == 0:
-                self.exit_long_act_price = self.current_act_price
-                self.stg_act_profit = 100 * (
-                            self.exit_long_act_price - self.enter_long_act_price) / self.enter_long_act_price
-            elif self.prev_action == 2:
-                self.exit_short_act_price = self.current_act_price
-                self.stg_act_profit = 100 * (
-                            self.enter_short_act_price - self.exit_short_act_price) / self.exit_short_act_price
-            else:
-                self.stg_act_profit = 0
+        self.done = self.kernel.runner()
+        self.close_price.extend(self.kernel.agents[0].order_books['ABM'].close)
+        indicators = TEMA_indicators(self.close_price)
+        bids = self.order_book.getInsideBids(self.depth)
+        if len(bids) < self.depth:
+            bids.apped((0,0,0))
+        bids = [item for bid in bids for item in bid[:2]]
+        asks = self.order_book.getInsideAsks(self.depth)
+        if len(asks) < self.depth:
+            asks.apped((0,0,0))
+        asks = [item for ask in asks for item in ask[:2]]
+        self.state = [self.balance] + bids + asks + indicators
+        return self.state
 
     def render(self, mode='human', close=False):
         pass
