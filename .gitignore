@@ -8,7 +8,7 @@ __pycache__/
 
 # Distribution / packaging
 .idea/
-abides/
+#abides/
 data/
 .Python
 build/
