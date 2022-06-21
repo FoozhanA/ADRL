@@ -15,7 +15,7 @@ def TEMA_indicators(close_price):
     MACD = TA.MACD(df)
     CCI = TA.CCI(df)
     ADX = TA.ADX(df)
-    return  MACD.values.tolist()[-1:] + \
+    return  MACD.values.tolist()[-1] + \
             RSI.values.tolist()[-1:] + \
             CCI.values.tolist()[-1:] + \
             ADX.values.tolist()[-1:] \

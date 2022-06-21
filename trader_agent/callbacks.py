@@ -1,3 +1,5 @@
+from stable_baselines3.common.callbacks import EvalCallback, BaseCallback, EventCallback, CallbackList
+
 class EarlyStoppingCallback(EventCallback):
     """
 
@@ -82,7 +84,7 @@ class EarlyStoppingCallback(EventCallback):
                       "episode_reward={:.2f} +/- {:.2f}".format(self.num_timesteps, mean_reward, std_reward))
                 print("Episode length: {:.2f} +/- {:.2f}".format(mean_ep_length, std_ep_length))
 
-            if mean_reward > self.best_mean_reward:
+            if mean_reward > self.best_mean_reward and mean_reward != 0:
 
                 self.best_model = self.model
 

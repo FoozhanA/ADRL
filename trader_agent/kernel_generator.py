@@ -166,7 +166,7 @@ class CustomKernel(Kernel):
 
             # Periodically print the simulation time and total messages, even if muted.
             if self.ttl_messages % 100000 == 0:
-                print("\n--- Simulation time: {}, messages processed: {}, wallclock elapsed: {} ---\n".format(
+                log_print("\n--- Simulation time: {}, messages processed: {}, wallclock elapsed: {} ---\n".format(
                     self.fmtTime(self.currentTime), self.ttl_messages, pd.Timestamp('now') - self.eventQueueWallClockStart))
 
             log_print("\n--- Kernel Event Queue pop ---")
@@ -250,9 +250,9 @@ class CustomKernel(Kernel):
 
                 log_print("After receiveMessage return, agent {} delayed from {} to {}",
                           agent, self.fmtTime(self.currentTime), self.fmtTime(self.agentCurrentTimes[agent]))
-                if self.prevtime <= self.currentTime and self.currentTime - self.prevtime >= pd.Timedelta(1, unit='min'):
+                if self.prevtime <= self.currentTime and self.currentTime - self.prevtime >= pd.Timedelta(intervals, unit='min'):
                     self.prevtime = self.currentTime
-                    break
+                    return False
 
 
             else:
@@ -260,8 +260,9 @@ class CustomKernel(Kernel):
                                  "currentTime:", self.currentTime,
                                  "messageType:", self.msg.type)
 
-            if self.messages.empty() or (self.currentTime > self.stopTime):
-                return True
+        else:
+            print('time', self.currentTime)
+            return True
 
 
 def kernel_generator(Exchange_Agent = 1, POV_Market_Maker_Agent = 1, Value_Agents = 100,
@@ -269,7 +270,7 @@ def kernel_generator(Exchange_Agent = 1, POV_Market_Maker_Agent = 1, Value_Agent
                     ticker='ABM',
                     historical_date='20200603',
                     start_time=dt.datetime.strptime('09:30:00','%H:%M:%S'),
-                    end_time=dt.datetime.strptime('10:30:00','%H:%M:%S'), verbose=False,
+                    end_time=dt.datetime.strptime('16:00:00','%H:%M:%S'), verbose=0,
                     fund_vol=1e-8, experimental_agent=False, ea_short_window='2min', ea_long_window='5min'):
 
     log_dir = f'log/experimental_agent_demo_short_2min_long_5min_{seed}'
@@ -353,7 +354,7 @@ def kernel_generator(Exchange_Agent = 1, POV_Market_Maker_Agent = 1, Value_Agent
 
     # 2) Noise Agents
     num_noise = 5000
-    noise_mkt_open = historical_date + pd.to_timedelta("09:00:00")  # These times needed for distribution of arrival times
+    noise_mkt_open = historical_date + pd.to_timedelta("09:30:00")  # These times needed for distribution of arrival times
                                                                     # of Noise Agents
     noise_mkt_close = historical_date + pd.to_timedelta("16:00:00")
     agents.extend([NoiseAgent(id=j,

@@ -14,6 +14,7 @@ from sklearn.preprocessing import MinMaxScaler
 from collections import deque
 # from unittest import assertIs
 from abides.util.order.MarketOrder import MarketOrder
+import time
 
 class TraderEnv(gym.Env):
     """
@@ -22,24 +23,24 @@ class TraderEnv(gym.Env):
     """
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, apply_penalty = False):
+    def __init__(self, apply_penalty = False, eval = -1):
 
         super(TraderEnv, self).__init__()
         print('###################################################### This is TraderEnv environment!')
 
-
-
+        self.eval = eval
+        # self.total_steps = 60 if eval else -1
         self.apply_penalty = apply_penalty
-        print(f'####### apply_penalty = {self.apply_penalty}')
+        # print(f'####### apply_penalty = {self.apply_penalty}')
         self.balance = 10000000 #100,000$ in cents
 
         self.scaler = MinMaxScaler()
 
-        # self.cols_to_report = ['index', 'stock', 'datetime', 'action', 'profit', self.act_price,
-        #                        'reward', 'done', 'end_episod']
+        self.cols_to_report = ['symbol', 'timestamp', 'action', 'profit', 'close',
+                               'reward']
 
         self.action_space = spaces.Box(low = -1, high = 1,shape = (1,))
-        self.observation_space = spaces.Box(low=-1, high=2, shape=(25 ,),
+        self.observation_space = spaces.Box(low=-1, high=np.inf, shape=(27,),
                                             dtype=np.float32)
         # self.current_stock_data = self.df.loc[:, self.columns_to_env].values.astype('float32')
 
@@ -51,20 +52,41 @@ class TraderEnv(gym.Env):
         self.state = []
         self.close_price = deque(maxlen=50)
         self.depth = 5
-        self.max_share = 100
-        self.reward_coef = 1e-4
+        self.max_share = 50
+        self.reward_coef = 2e-5
         self.order_book = None
         self.shares = 0
         self.reward = 0
         self.done = False
+        self.total_profit = 0
+        self.n_step = 0
+        self.kernel = None
+        # self.maxvec = [0 for i in range(27)]
+        # self.minvec = [10000 for i in range(27)]
+        # self.mnrew = [0 for i in range(2)]
+
+        # minvec[
+        #     108979, 555, 100506, 538, 100505, 434, 100500, 443, 100498, 395, 100497, 430, 100507, 1724, 100509, 1892, 100512, 3497, 100513, 3644, 100516, 3498, 4.633550612314139, 4.91304420213026, 96.02674239117559, 444.44444444444446, 80.95823671829234]
+        # maxvec[
+        #     -111034, 0, 10000, 1, 10000, 1, 10000, 1, 10000, 1, 10000, 1, 10000, 1, 10000, 1, 10000, 1, 10000, 1, 10000, 1, -6.405207242016331, -5.710141638034008, 3.947241014904165, -549.7076023392211, 6.6608465819867835]
+        # minrew, maxrew[-11.1034, 10.8979]
+
+        minvec = np.array([457951, 2403, 100506, 538, 100505, 522, 100500, 50000, 100498, 50001, 100497, 50001, 100507, 2019, 100509, 2583, 100512, 3497, 100513, 3644, 100526, 3498, 6.549383116827812, 5.595353704855847, 96.02674239117559, 481.48148148140666, 95.97485439875099])
+        maxvec = np.array([ -482184, 0, 10000, 1, 10000, 1, 10000, 1, 10000, 1, 10000, 1, 10000, 1, 10000, 1, 10000, 1, 10000, 1, 10000, 1, -12.095042306216783, -12.640727662564942, 3.947241014904165, -549.7076023392211, 5.129108700382522])
+        # minrew, maxrew[-48.2184, 45.795100000000005]
+        self.state_coef = 1/np.maximum(abs(minvec), abs(maxvec))
 
     def reset(self):
+        self.total_profit = 0
         self.shares = 0
+        self.step_profit = 0
         self.kernel = kernel_generator()
+        print('ran_reset in step: ', self.n_step)
+        self.n_step = 0
+
         self.done = False
         self.balance = 10000000
-        self.close_price = deque(maxlen=50)
-        self.close_price.extend([100000]*50)
+        self.close_price = self.kernel.agents[0].order_books['ABM'].close
         self.order_book = self.kernel.agents[0].order_books['ABM']
         # self.kernel.runner()
         # self.close_price.append(self.kernel.agents[0].order_books['ABM'].close)
@@ -73,92 +95,65 @@ class TraderEnv(gym.Env):
 
         # assertIs(self.order_book, self.kernel.agents[0].order_books['ABM'])
 
-        return self._observation()
+        return self._observation().astype(np.float32)
 
     def step(self, action):
+        self.n_step += 1
         begin_asset = self.balance + self.shares * self.close_price[-1]
-        if action != 0:
 
-            is_buy = action > 0
-            action *= self.max_share
-            if action < 0:
-                action = min(action, self.shares)
-            order = MarketOrder(0, self.kernel.agents[0].currentTime, 'ABM', action, is_buy)
-            cost, shares = self.order_book['ABM'].handleMarketOrder(order)
+        is_buy = action > 0
+        action *= self.max_share
+        amount = int(abs(action))
+        if not is_buy:
+            amount = min(amount, self.shares)
+        if amount > 0:
+            order = MarketOrder(0, self.kernel.agents[0].currentTime, 'ABM',amount , is_buy)
+            cost, shares = self.kernel.agents[0].order_books['ABM'].handleMarketOrder(order)
             cost *= (-1 if not is_buy else 1)
             self.kernel.agents[0].publishOrderBookData()
             self.shares += shares * (-1 if not is_buy else 1)
             self.balance -= cost
 
-        obs = self._observation()
+        self.state = self._observation()
+        # self.maxvec = [max(self.maxvec[i], self.state[i]) for i in range(27)]
+        # self.minvec = [min(self.minvec[i], self.state[i]) for i in range(27)]
         end_asset = self.balance + self.shares * self.close_price[-1]
 
-        self.reward = (end_asset - begin_asset) * self.reward_coef
+        self.step_profit = end_asset - begin_asset
 
-        # self.new_take_action(action)
-        # # self.stg_act_profit *= 3/2
-        #
-        # # self.reward =
-        # penalty = self.aux_penalty(action, self.trade_duration)
-        #
-        # self.reward = self.stg_act_profit
-        #
-        # self.start_pos += 1
-        # if action == self.prev_action:
-        #     self.trade_duration += 1
-        # else:
-        #     self.trade_duration = 1
-        #
-        # act = action
-        #
-        # row2append = row2append +  [self.current_stock, self.df.loc[self.current_index, 'datetime'],
-        #                            self.action_type(act), self.stg_act_profit,
-        #                            self.current_act_price, self.reward,
-        #                            self.done, self.df.loc[self.current_index, 'end_episod']]
-        #
-        # row2append += [self.constant]
-        #
-        # self.info2output.append(row2append)
-        #
-        # if self.done:
-        #
-        #     if self.random_reset:
-        #         self.current_index = random.randrange(len(self.df))
-        #     else:
-        #         self.current_index += 1
-        #         if self.current_index >= len(self.df) - 1:
-        #             self.current_index = 0
-        #     self.total_profit = 0
-        #     self.reward = 0
-        #
-        #     self.start_pos = 0
-        # else:
-        #     self.current_index += 1
-        #     if self.current_index >= len(self.df) - 1:
-        #         self.current_index = 0
-        #
-        # obs = self._observation()
-        # # print(obs)
-        # self.prev_action = action
-        # self.prev_trade_signal = self.trade_signal
-        # self.prev_stg_act_profit = self.stg_act_profit
+        self.total_profit = end_asset - 10000000
+        self.reward = self.step_profit * self.reward_coef
+        # print(self.reward,self.state)
+        if self.eval != -1:
+            # print('self.eval != -1 ', self.n_step)
+            if self.n_step == self.eval:
+                self.done = True
+        if self.done:
+            print(end_asset, self.total_profit)
 
-        return obs, self.reward, self.done, {}
+        # self.mnrew[0], self.mnrew[1] = min(self.reward, self.mnrew[0]), max(self.reward, self.mnrew[1])
+        return self.state, self.reward, self.done, {}
 
     def _observation(self):
-        self.done = self.kernel.runner()
-        self.close_price.extend(self.kernel.agents[0].order_books['ABM'].close)
+        # TO-DO: change lists to np array
+        # state = np.empty_like(self.observation_space)
+        self.done = self.kernel.runner(intervals = 5)
+
+        print('#############################', self.kernel.currentTime, self.done)
+        self.close_price = self.kernel.agents[0].order_books['ABM'].close
         indicators = TEMA_indicators(self.close_price)
         bids = self.order_book.getInsideBids(self.depth)
         if len(bids) < self.depth:
-            bids.apped((0,0,0))
+            bids.append((0,0,0))
+
         bids = [item for bid in bids for item in bid[:2]]
         asks = self.order_book.getInsideAsks(self.depth)
+
         if len(asks) < self.depth:
             asks.apped((0,0,0))
         asks = [item for ask in asks for item in ask[:2]]
-        self.state = [self.balance] + bids + asks + indicators
-        return self.state
+        ret = np.append([self.step_profit, self.shares] , [*bids , *asks , *indicators])
+        return  ret * self.state_coef
 
     def render(self, mode='human', close=False):
         pass
@@ -171,6 +166,8 @@ class TraderEnv(gym.Env):
 
     def close(self):
         pass
+
+
 
 
 class APIAgent(TradingAgent, TraderEnv):
